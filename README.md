@@ -84,7 +84,7 @@ RagePad stores session data in:
 ## Requirements
 
 - Windows 10/11
-- .NET 8.0 Runtime
+- [.NET 8.0 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0) (download the "Desktop Runtime" for Windows x64)
 
 ## License
 
