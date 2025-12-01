@@ -18,4 +18,12 @@
   <ItemGroup>
     <PackageReference Include="Scintilla5.NET" Version="6.1.0" />
   </ItemGroup>
+  <ItemGroup>
+    <Content Include="RagePad.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="version.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
 </Project>

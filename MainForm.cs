@@ -113,6 +113,11 @@ public sealed class MainForm : Form
         view.DropDownItems.Add(new ToolStripMenuItem("&Word Wrap", null, ToggleWordWrap));
         menu.Items.Add(view);
 
+        // Help menu
+        var help = new ToolStripMenuItem("&Help");
+        help.DropDownItems.Add(new ToolStripMenuItem("&About RagePad", null, (s, e) => ShowAboutDialog()));
+        menu.Items.Add(help);
+
         return menu;
     }
 
@@ -415,6 +420,109 @@ public sealed class MainForm : Form
                 if (editor != null) editor.WrapMode = mode;
             }
         }
+    }
+
+    private void ShowAboutDialog()
+    {
+        // Read version from file
+        var version = "0.1";
+        var versionFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "version.txt");
+        if (File.Exists(versionFile))
+        {
+            version = File.ReadAllText(versionFile).Trim();
+        }
+
+        using var dlg = new Form
+        {
+            Text = "About RagePad",
+            Width = 400,
+            Height = 350,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            StartPosition = FormStartPosition.CenterParent,
+            MaximizeBox = false,
+            MinimizeBox = false,
+            BackColor = Color.White
+        };
+
+        // Load splash image
+        var imagePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "RagePad.png");
+        PictureBox? pictureBox = null;
+        if (File.Exists(imagePath))
+        {
+            pictureBox = new PictureBox
+            {
+                Image = Image.FromFile(imagePath),
+                SizeMode = PictureBoxSizeMode.Zoom,
+                Left = 50,
+                Top = 20,
+                Width = 280,
+                Height = 150
+            };
+            dlg.Controls.Add(pictureBox);
+        }
+
+        var titleLabel = new Label
+        {
+            Text = "RagePad",
+            Font = new Font("Segoe UI", 18f, FontStyle.Bold),
+            Left = 0,
+            Top = pictureBox != null ? 180 : 20,
+            Width = dlg.ClientSize.Width,
+            Height = 35,
+            TextAlign = ContentAlignment.MiddleCenter
+        };
+
+        var versionLabel = new Label
+        {
+            Text = $"Version {version}",
+            Font = new Font("Segoe UI", 10f),
+            ForeColor = Color.Gray,
+            Left = 0,
+            Top = titleLabel.Bottom,
+            Width = dlg.ClientSize.Width,
+            Height = 25,
+            TextAlign = ContentAlignment.MiddleCenter
+        };
+
+        var authorLabel = new Label
+        {
+            Text = "Author: Rajorshi Biswas",
+            Font = new Font("Segoe UI", 10f),
+            Left = 0,
+            Top = versionLabel.Bottom + 10,
+            Width = dlg.ClientSize.Width,
+            Height = 22,
+            TextAlign = ContentAlignment.MiddleCenter
+        };
+
+        var emailLink = new LinkLabel
+        {
+            Text = "ragebiswas@gmail.com",
+            Font = new Font("Segoe UI", 10f),
+            Left = 0,
+            Top = authorLabel.Bottom,
+            Width = dlg.ClientSize.Width,
+            Height = 22,
+            TextAlign = ContentAlignment.MiddleCenter
+        };
+        emailLink.LinkClicked += (s, e) =>
+        {
+            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("mailto:ragebiswas@gmail.com") { UseShellExecute = true }); }
+            catch { }
+        };
+
+        var btnOk = new Button
+        {
+            Text = "OK",
+            Left = (dlg.ClientSize.Width - 80) / 2,
+            Top = emailLink.Bottom + 15,
+            Width = 80,
+            DialogResult = DialogResult.OK
+        };
+
+        dlg.Controls.AddRange(new Control[] { titleLabel, versionLabel, authorLabel, emailLink, btnOk });
+        dlg.AcceptButton = btnOk;
+        dlg.ShowDialog(this);
     }
 
     private void Editor_UpdateUI(object? sender, UpdateUIEventArgs e)
