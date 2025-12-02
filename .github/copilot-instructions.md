@@ -12,76 +12,130 @@ RagePad is a Notepad++ replacement built with:
 ## Project Structure
 
 ```
-RagePad.WinForms/
-├── MainForm.cs           # Main application window, tabs, menus, session management
-├── FindReplaceDialog.cs  # Find/Replace dialog with all search options
-├── SyntaxHighlighter.cs  # Language detection and syntax coloring
-├── Program.cs            # Entry point
-└── RagePad.WinForms.csproj
+RagePad/
+├── MainForm.cs              # Main window - UI orchestration, tabs, menus
+├── FindReplaceDialog.cs     # Find/Replace dialog with all search options
+├── SyntaxHighlighter.cs     # Language detection and syntax coloring
+├── Program.cs               # Entry point
+├── RagePad.csproj           # Project file
+├── RagePad.sln              # Solution file
+├── version.txt              # Version number (read by AboutDialog)
+├── RagePad.png              # Logo for About dialog
+├── RagePadLogo.png          # Icon for window
+├── publish-release.ps1      # Build and package release script
+│
+├── Models/
+│   └── TabData.cs           # Tab metadata (FilePath, IsModified, UntitledNumber)
+│
+├── Services/
+│   ├── AppInfo.cs           # Application paths and version info
+│   ├── EditorFactory.cs     # Scintilla editor creation and configuration
+│   └── SessionManager.cs    # Session save/restore logic
+│
+└── Dialogs/
+    ├── AboutDialog.cs       # About dialog with logo and credits
+    └── GoToLineDialog.cs    # Go to line number dialog
 ```
 
-## Key Implementation Details
+## Key Components
 
 ### MainForm.cs
 
-#### Fields
+The main window orchestrates UI components. Organized into regions:
+
+- **Fields** - UI controls, services, state
+- **Initialization** - Form setup, icon, layout
+- **Menu & Toolbar** - Menu creation (File, Edit, View, Help)
+- **Tab Management** - NewTab, CloseTab, tab events
+- **File Operations** - Open, Save, SaveAs
+- **Dialogs** - Find/Replace, GoToLine, About, Font
+- **Editor Events** - UpdateUI, TextChanged handlers
+- **Session Management** - Save/Load via SessionManager
+- **Form Overrides** - OnLoad, OnClosing, Drag/Drop
+- **IMessageFilter** - Double-click detection on tab bar
+
+#### Key Fields
 ```csharp
-private readonly MenuStrip _menu;
 private readonly TabControl _tabs;
-private readonly ToolStrip _toolStrip;
-private readonly StatusStrip _statusStrip;
-private readonly ToolStripStatusLabel _statusLabel;
-private readonly ToolStripStatusLabel _positionLabel;
-private Font _editorFont;                    // Default: Consolas 11pt
-private int _untitledCount;                  // Counter for "Untitled N" tabs
-private bool _isLoading;                     // Suppresses TextChanged during file load
-private DateTime _lastTabBarClick;           // For manual double-click detection
-private Point _lastTabBarClickPos;
+private readonly SessionManager _sessionManager;
+private Font _editorFont;           // Default: Consolas 11pt
+private int _untitledCount;         // Counter for "Untitled N" tabs
+private bool _isLoading;            // Suppresses TextChanged during file load
 ```
 
-#### Session Paths
+### Models/TabData.cs
+
+Stores metadata for each open tab:
 ```csharp
-static readonly string SessionDir = Path.Combine(
-    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RagePad");
-static readonly string SessionFile = Path.Combine(SessionDir, "session.txt");
-static readonly string BackupDir = Path.Combine(SessionDir, "backup");
+public string? FilePath { get; set; }      // null for untitled files
+public bool IsModified { get; set; }       // Has unsaved changes
+public int UntitledNumber { get; set; }    // For "Untitled N" naming
+public string DisplayName { get; }         // Computed: filename or "Untitled N"
 ```
 
-#### Session File Format
-```
-FILE:C:\path\to\saved\file.txt
-BACKUP:C:\Users\...\RagePad\backup\untitled_1.txt
+### Services/AppInfo.cs
+
+Centralized application paths and info:
+```csharp
+AppInfo.BaseDirectory      // exe location
+AppInfo.SessionDir         // %LOCALAPPDATA%\RagePad
+AppInfo.SessionFile        // session.txt path
+AppInfo.BackupDir          // backup folder path
+AppInfo.GetVersion()       // reads version.txt
 ```
 
-#### Editor Creation (CreateEditor method)
+### Services/EditorFactory.cs
+
+Creates and configures Scintilla editors:
+```csharp
+EditorFactory.Create(font)           // Creates new configured editor
+EditorFactory.ApplyFont(editor, font) // Applies font to existing editor
+```
+
+Configuration:
 - `BufferedDraw = false` - Faster rendering
 - `Technology = Technology.DirectWrite` - Hardware acceleration
 - Line numbers margin: 40px width
 - Caret line highlight: RGB(232, 242, 254)
-- Events: `UpdateUI` (cursor position), `TextChanged` (dirty flag)
 
-#### Tab Management
-- `TabData` class stores: `FilePath` (null for untitled), `IsModified`
-- Middle-click closes tab
-- Double-click on empty tab bar creates new tab (manual detection via MouseDown)
-- Modified files show `*` suffix
+### Services/SessionManager.cs
 
-#### Important Flags
-- `_isLoading`: Set to `true` before loading file content, `false` after. Prevents TextChanged from marking file as modified during load/syntax highlighting.
+Handles session persistence:
+```csharp
+sessionManager.Save(tabs)    // Save current session
+sessionManager.Load()        // Returns IEnumerable<TabEntry>
+```
+
+Session file format:
+```
+FILE:C:\path\to\saved\file.txt
+BACKUP:1:C:\Users\...\RagePad\backup\untitled_1.txt
+```
+
+### Dialogs/AboutDialog.cs
+
+Shows app info:
+- RagePad.png logo
+- Version from version.txt
+- Author: Rajorshi Biswas
+- Clickable email link
+
+### Dialogs/GoToLineDialog.cs
+
+Simple line number input:
+- Pre-fills current line
+- Validates range
+- Returns `SelectedLine` property
 
 ### FindReplaceDialog.cs
 
-#### Features
+Find/Replace features:
 - Find Next / Find Previous
 - Replace / Replace All
-- Match Case checkbox
-- Whole Word checkbox  
-- Wrap Around checkbox (default: checked)
+- Match Case, Whole Word, Wrap Around checkboxes
 - Pre-fills with selected text
-- Escape key closes dialog
-- Enter key triggers Find Next (Shift+Enter for Find Previous)
+- Escape closes, Enter finds
 
-#### Search Implementation
 Uses Scintilla's native search:
 ```csharp
 editor.SearchFlags = GetSearchFlags();  // MatchCase, WholeWord
@@ -92,23 +146,12 @@ int pos = editor.SearchInTarget(searchText);
 
 ### SyntaxHighlighter.cs
 
-#### Usage
+Language detection by extension:
 ```csharp
 SyntaxHighlighter.ApplyHighlighting(editor, filePath);
 ```
 
-#### Language Detection
-Based on file extension. Maps to Scintilla lexer names:
-- `.cs` → `"cpp"` lexer with C# keywords
-- `.js/.ts` → `"cpp"` lexer with JS keywords
-- `.json` → `"json"` lexer
-- `.xml/.html` → `"xml"` lexer
-- `.css` → `"css"` lexer
-- `.py` → `"python"` lexer
-- `.sql` → `"sql"` lexer
-- `.md` → `"markdown"` lexer
-- `.bat/.cmd` → `"batch"` lexer
-- `.ps1` → `"powershell"` lexer
+Supported: `.cs`, `.js/.ts`, `.json`, `.xml/.html`, `.css`, `.py`, `.sql`, `.md`, `.bat/.cmd`, `.ps1`
 
 #### Scintilla5.NET Lexer API
 ```csharp
@@ -118,23 +161,7 @@ editor.SetKeywords(1, "type list...");     // Secondary keywords (types)
 editor.Styles[Style.Cpp.Comment].ForeColor = Color.Green;
 ```
 
-### Performance Optimizations
-
-#### In .csproj
-```xml
-<TieredCompilation>true</TieredCompilation>
-<TieredCompilationQuickJit>true</TieredCompilationQuickJit>
-<PublishReadyToRun>true</PublishReadyToRun>
-<InvariantGlobalization>true</InvariantGlobalization>
-```
-
-#### In Code
-- `DoubleBuffered = true` on Form
-- `BufferedDraw = false` on Scintilla (counterintuitive but faster)
-- `Technology = Technology.DirectWrite` for GPU rendering
-- Synchronous file I/O (faster for small-medium files)
-
-## Known Patterns
+## Important Patterns
 
 ### Loading Files Without Dirty Flag
 ```csharp
@@ -145,27 +172,62 @@ _isLoading = false;
 ((TabData)tab.Tag!).IsModified = false;
 ```
 
-### Double-Click Detection on TabControl
-TabControl doesn't fire MouseDoubleClick on empty areas. Solution:
+### Double-Click on Empty Tab Bar
+TabControl doesn't fire MouseDoubleClick on empty areas. Solution uses IMessageFilter:
 ```csharp
-_tabs.MouseDown += Tabs_MouseDown;
-
-private void Tabs_MouseDown(object? sender, MouseEventArgs e) {
-    // Check if in tab header area (not content)
-    if (e.Y > _tabs.ItemSize.Height + 4) return;
-    
-    // Check not on a tab
-    for (int i = 0; i < _tabs.TabCount; i++)
-        if (_tabs.GetTabRect(i).Contains(e.Location)) return;
-    
-    // Manual double-click detection
-    var elapsed = (DateTime.Now - _lastTabBarClick).TotalMilliseconds;
-    if (elapsed < SystemInformation.DoubleClickTime) {
-        NewTab();
+public bool PreFilterMessage(ref Message m)
+{
+    // WM_LBUTTONDBLCLK = 0x0203
+    if (m.Msg == 0x0203)
+    {
+        var tabPt = _tabs.PointToClient(Cursor.Position);
+        // Check if in tab header area but not on any tab
+        if (tabPt.Y >= 0 && tabPt.Y < 30)
+        {
+            bool onTab = false;
+            for (int i = 0; i < _tabs.TabCount; i++)
+                if (_tabs.GetTabRect(i).Contains(tabPt)) { onTab = true; break; }
+            
+            if (!onTab) { NewTab(); return true; }
+        }
     }
-    _lastTabBarClick = DateTime.Now;
+    return false;
 }
 ```
+
+### Consistent Untitled Naming
+Each tab stores its `UntitledNumber` in TabData. On session restore, the number is preserved. Global `_untitledCount` tracks the highest used number.
+```
+
+## Performance Optimizations
+
+### In .csproj
+```xml
+<TieredCompilation>true</TieredCompilation>
+<TieredCompilationQuickJit>true</TieredCompilationQuickJit>
+<PublishReadyToRun>true</PublishReadyToRun>
+<InvariantGlobalization>true</InvariantGlobalization>
+```
+
+### In Code
+- `DoubleBuffered = true` on Form
+- `BufferedDraw = false` on Scintilla (counterintuitive but faster)
+- `Technology = Technology.DirectWrite` for GPU rendering
+- Synchronous file I/O (faster for small-medium files)
+
+## Building & Releasing
+
+### Debug Build
+```bash
+dotnet build
+dotnet run
+```
+
+### Create Release
+```powershell
+powershell -ExecutionPolicy Bypass -File publish-release.ps1
+```
+Creates `RagePad-v{version}-win-x64.zip` ready for GitHub release.
 
 ## Future Enhancements (Not Yet Implemented)
 
@@ -185,7 +247,8 @@ private void Tabs_MouseDown(object? sender, MouseEventArgs e) {
 1. **Files show dirty on open**: Check `_isLoading` flag is set before AND after text/highlighting changes
 2. **Session not restoring**: Check `%LOCALAPPDATA%\RagePad\session.txt` exists and has correct format
 3. **Syntax not working**: Ensure `LexerName` is set (string, not enum) and styles are applied AFTER setting lexer
-4. **Double-click not working**: TabControl consumes double-clicks on tabs; use MouseDown for empty area detection
+4. **Double-click not working**: IMessageFilter intercepts WM_LBUTTONDBLCLK (0x0203)
+5. **Untitled names changing**: Check TabData.UntitledNumber is preserved through session save/restore
 
 ## Dependencies
 
