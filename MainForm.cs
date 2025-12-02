@@ -6,7 +6,7 @@ using System.Windows.Forms;
 
 namespace RagePad;
 
-public sealed class MainForm : Form
+public sealed class MainForm : Form, IMessageFilter
 {
     private readonly MenuStrip _menu;
     private readonly TabControl _tabs;
@@ -17,8 +17,6 @@ public sealed class MainForm : Form
     private Font _editorFont;
     private int _untitledCount;
     private bool _isLoading; // Suppress TextChanged during load
-    private DateTime _lastTabBarClick = DateTime.MinValue;
-    private Point _lastTabBarClickPos;
     private static readonly string SessionDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "RagePad");
@@ -33,6 +31,15 @@ public sealed class MainForm : Form
         Height = 800;
         StartPosition = FormStartPosition.CenterScreen;
         DoubleBuffered = true;
+
+        // Set window icon
+        var iconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "RagePadLogo.png");
+        if (File.Exists(iconPath))
+        {
+            using var img = Image.FromFile(iconPath);
+            using var bmp = new Bitmap(img, 32, 32);
+            Icon = Icon.FromHandle(bmp.GetHicon());
+        }
 
         _editorFont = new Font("Consolas", 11f, FontStyle.Regular);
 
@@ -52,7 +59,9 @@ public sealed class MainForm : Form
         };
         _tabs.SelectedIndexChanged += Tabs_SelectedIndexChanged;
         _tabs.MouseClick += Tabs_MouseClick;
-        _tabs.MouseDown += Tabs_MouseDown;
+        
+        // Register message filter for double-click detection
+        Application.AddMessageFilter(this);
 
         // Status bar
         _statusStrip = new StatusStrip();
@@ -207,6 +216,7 @@ public sealed class MainForm : Form
     {
         _untitledCount++;
         var tab = CreateTab($"Untitled {_untitledCount}");
+        ((TabData)tab.Tag!).UntitledNumber = _untitledCount;
         _tabs.TabPages.Add(tab);
         _tabs.SelectedTab = tab;
         CurrentEditor?.Focus();
@@ -461,24 +471,13 @@ public sealed class MainForm : Form
             dlg.Controls.Add(pictureBox);
         }
 
-        var titleLabel = new Label
-        {
-            Text = "RagePad",
-            Font = new Font("Segoe UI", 18f, FontStyle.Bold),
-            Left = 0,
-            Top = pictureBox != null ? 180 : 20,
-            Width = dlg.ClientSize.Width,
-            Height = 35,
-            TextAlign = ContentAlignment.MiddleCenter
-        };
-
         var versionLabel = new Label
         {
             Text = $"Version {version}",
             Font = new Font("Segoe UI", 10f),
             ForeColor = Color.Gray,
             Left = 0,
-            Top = titleLabel.Bottom,
+            Top = pictureBox != null ? 180 : 20,
             Width = dlg.ClientSize.Width,
             Height = 25,
             TextAlign = ContentAlignment.MiddleCenter
@@ -520,7 +519,7 @@ public sealed class MainForm : Form
             DialogResult = DialogResult.OK
         };
 
-        dlg.Controls.AddRange(new Control[] { titleLabel, versionLabel, authorLabel, emailLink, btnOk });
+        dlg.Controls.AddRange(new Control[] { versionLabel, authorLabel, emailLink, btnOk });
         dlg.AcceptButton = btnOk;
         dlg.ShowDialog(this);
     }
@@ -572,44 +571,11 @@ public sealed class MainForm : Form
         }
     }
 
-    private void Tabs_MouseDown(object? sender, MouseEventArgs e)
-    {
-        if (e.Button != MouseButtons.Left) return;
-        
-        // Check if we're in the tab header area
-        int tabHeaderHeight = _tabs.ItemSize.Height + 4;
-        if (e.Y > tabHeaderHeight) return;
-        
-        // Check if clicked on a tab
-        for (int i = 0; i < _tabs.TabCount; i++)
-        {
-            if (_tabs.GetTabRect(i).Contains(e.Location))
-                return; // Clicked on a tab, not empty space
-        }
-        
-        // Check for double-click manually
-        var now = DateTime.Now;
-        var elapsed = (now - _lastTabBarClick).TotalMilliseconds;
-        var distance = Math.Abs(e.X - _lastTabBarClickPos.X) + Math.Abs(e.Y - _lastTabBarClickPos.Y);
-        
-        if (elapsed < SystemInformation.DoubleClickTime && distance < 10)
-        {
-            // Double-click on empty tab bar area
-            NewTab();
-            _lastTabBarClick = DateTime.MinValue; // Reset
-        }
-        else
-        {
-            _lastTabBarClick = now;
-            _lastTabBarClickPos = e.Location;
-        }
-    }
-
     private void UpdateTabTitle()
     {
         if (_tabs.SelectedTab == null) return;
         var data = (TabData)_tabs.SelectedTab.Tag!;
-        var name = data.FilePath != null ? Path.GetFileName(data.FilePath) : $"Untitled {_untitledCount}";
+        var name = data.FilePath != null ? Path.GetFileName(data.FilePath) : $"Untitled {data.UntitledNumber}";
         _tabs.SelectedTab.Text = data.IsModified ? name + "*" : name;
     }
 
@@ -681,7 +647,6 @@ public sealed class MainForm : Form
                 File.Delete(f);
             
             var sessionLines = new System.Collections.Generic.List<string>();
-            int backupIndex = 0;
             
             foreach (TabPage tab in _tabs.TabPages)
             {
@@ -695,11 +660,11 @@ public sealed class MainForm : Form
                 }
                 else if (editor != null)
                 {
-                    // Untitled file - backup content
-                    backupIndex++;
-                    var backupFile = Path.Combine(BackupDir, $"untitled_{backupIndex}.txt");
+                    // Untitled file - backup content with its number
+                    var untitledNum = data.UntitledNumber;
+                    var backupFile = Path.Combine(BackupDir, $"untitled_{untitledNum}.txt");
                     File.WriteAllText(backupFile, editor.Text);
-                    sessionLines.Add($"BACKUP:{backupFile}");
+                    sessionLines.Add($"BACKUP:{untitledNum}:{backupFile}");
                 }
             }
             
@@ -725,11 +690,36 @@ public sealed class MainForm : Form
                     }
                     else if (line.StartsWith("BACKUP:"))
                     {
-                        var backupPath = line.Substring(7);
+                        // Format: BACKUP:number:path
+                        var rest = line.Substring(7);
+                        var colonIdx = rest.IndexOf(':');
+                        int untitledNum = 1;
+                        string backupPath;
+                        
+                        if (colonIdx > 0 && int.TryParse(rest.Substring(0, colonIdx), out var num))
+                        {
+                            untitledNum = num;
+                            backupPath = rest.Substring(colonIdx + 1);
+                        }
+                        else
+                        {
+                            // Legacy format without number
+                            backupPath = rest;
+                        }
+                        
                         if (File.Exists(backupPath))
                         {
-                            // Restore untitled file from backup
-                            NewTab();
+                            // Restore untitled file from backup with original number
+                            var tab = CreateTab($"Untitled {untitledNum}");
+                            var data = (TabData)tab.Tag!;
+                            data.UntitledNumber = untitledNum;
+                            _tabs.TabPages.Add(tab);
+                            _tabs.SelectedTab = tab;
+                            
+                            // Update _untitledCount to be at least this number
+                            if (untitledNum >= _untitledCount)
+                                _untitledCount = untitledNum;
+                            
                             var editor = CurrentEditor;
                             if (editor != null)
                             {
@@ -738,14 +728,10 @@ public sealed class MainForm : Form
                                 _isLoading = false;
                                 
                                 // Mark as modified since it's unsaved content
-                                if (_tabs.SelectedTab != null)
+                                if (editor.TextLength > 0)
                                 {
-                                    var data = (TabData)_tabs.SelectedTab.Tag!;
-                                    if (editor.TextLength > 0)
-                                    {
-                                        data.IsModified = true;
-                                        UpdateTabTitle();
-                                    }
+                                    data.IsModified = true;
+                                    UpdateTabTitle();
                                 }
                             }
                         }
@@ -764,10 +750,46 @@ public sealed class MainForm : Form
         if (_tabs.TabCount == 0)
             NewTab();
     }
+    
+    // IMessageFilter implementation - catch double-clicks on tab bar empty area
+    public bool PreFilterMessage(ref Message m)
+    {
+        // WM_LBUTTONDBLCLK = 0x0203
+        if (m.Msg == 0x0203)
+        {
+            // Get cursor position relative to the tab control
+            var screenPt = Cursor.Position;
+            var tabPt = _tabs.PointToClient(screenPt);
+            
+            // Check if click is within the tab header area (roughly first 25 pixels)
+            if (tabPt.X >= 0 && tabPt.X < _tabs.Width && tabPt.Y >= 0 && tabPt.Y < 30)
+            {
+                // Check if NOT on any tab
+                bool onTab = false;
+                for (int i = 0; i < _tabs.TabCount; i++)
+                {
+                    if (_tabs.GetTabRect(i).Contains(tabPt))
+                    {
+                        onTab = true;
+                        break;
+                    }
+                }
+                
+                if (!onTab)
+                {
+                    // Double-click on empty tab bar area
+                    NewTab();
+                    return true; // Message handled
+                }
+            }
+        }
+        return false; // Pass message along
+    }
 }
 
 internal sealed class TabData
 {
     public string? FilePath { get; set; }
     public bool IsModified { get; set; }
+    public int UntitledNumber { get; set; } // For consistent "Untitled N" naming
 }

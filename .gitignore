@@ -2,6 +2,7 @@
 bin/
 obj/
 out/
+RagePad*.zip
 
 # Visual Studio
 .vs/
