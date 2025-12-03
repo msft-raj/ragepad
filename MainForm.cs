@@ -60,7 +60,7 @@ public sealed class MainForm : Form, IMessageFilter
         Width = 1200;
         Height = 800;
         StartPosition = FormStartPosition.CenterScreen;
-        DoubleBuffered = true;
+        // DoubleBuffered = true; // Removed to prevent conflict with Scintilla painting
 
         SetWindowIcon();
     }
@@ -578,11 +578,28 @@ public sealed class MainForm : Form, IMessageFilter
 
     #region Form Overrides
 
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            var cp = base.CreateParams;
+            cp.Style |= 0x02000000; // WS_CLIPCHILDREN
+            return cp;
+        }
+    }
+
     protected override void OnLoad(EventArgs e)
     {
         AllowDrop = true;
-        LoadSession();
+        // Session loading moved to OnShown for faster startup perception
         base.OnLoad(e);
+    }
+
+    protected override void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        Application.DoEvents(); // Ensure window is fully painted before loading
+        LoadSession();
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
