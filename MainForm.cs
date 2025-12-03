@@ -28,6 +28,10 @@ public sealed class MainForm : Form, IMessageFilter
     private int _untitledCount;
     private bool _isLoading;
 
+    // Compare fields
+    private string? _compareFirstFileContent;
+    private string? _compareFirstFileName;
+
     #endregion
 
     #region Constructor
@@ -135,9 +139,24 @@ public sealed class MainForm : Form, IMessageFilter
         menu.Items.Add(CreateFileMenu());
         menu.Items.Add(CreateEditMenu());
         menu.Items.Add(CreateViewMenu());
+        menu.Items.Add(CreateCompareMenu());
         menu.Items.Add(CreateHelpMenu());
 
         return menu;
+    }
+
+    private ToolStripMenuItem _compareWithMenuItem = null!;
+
+    private ToolStripMenuItem CreateCompareMenu()
+    {
+        var compare = new ToolStripMenuItem("&Compare");
+        compare.DropDownItems.Add(new ToolStripMenuItem("Select &First to Compare", null, (s, e) => SelectFirstToCompare(), Keys.Control | Keys.D1));
+        _compareWithMenuItem = new ToolStripMenuItem("Compare with First", null, (s, e) => CompareWithFirst(), Keys.Control | Keys.D2);
+        _compareWithMenuItem.Enabled = false;
+        compare.DropDownItems.Add(_compareWithMenuItem);
+        compare.DropDownItems.Add(new ToolStripSeparator());
+        compare.DropDownItems.Add(new ToolStripMenuItem("Clear Selection", null, (s, e) => ClearCompareSelection()));
+        return compare;
     }
 
     private ToolStripMenuItem CreateFileMenu()
@@ -462,7 +481,7 @@ public sealed class MainForm : Form, IMessageFilter
             foreach (TabPage tab in _tabs.TabPages)
             {
                 var editor = GetEditor(tab);
-                if (editor != null) 
+                if (editor != null)
                     EditorFactory.ApplyFont(editor, _editorFont);
             }
         }
@@ -470,17 +489,8 @@ public sealed class MainForm : Form, IMessageFilter
 
     private void ToggleWordWrap(object? sender, EventArgs e)
     {
-        if (sender is ToolStripMenuItem item)
-        {
-            item.Checked = !item.Checked;
-            var mode = item.Checked ? WrapMode.Word : WrapMode.None;
-            foreach (TabPage tab in _tabs.TabPages)
-            {
-                var editor = GetEditor(tab);
-                if (editor != null) 
-                    editor.WrapMode = mode;
-            }
-        }
+        if (CurrentEditor == null) return;
+        CurrentEditor.WrapMode = CurrentEditor.WrapMode == WrapMode.None ? WrapMode.Word : WrapMode.None;
     }
 
     #endregion
@@ -489,88 +499,23 @@ public sealed class MainForm : Form, IMessageFilter
 
     private void Editor_UpdateUI(object? sender, UpdateUIEventArgs e)
     {
-        if (CurrentEditor != null)
-        {
-            var line = CurrentEditor.CurrentLine + 1;
-            var col = CurrentEditor.GetColumn(CurrentEditor.CurrentPosition) + 1;
-            _positionLabel.Text = $"Ln {line}, Col {col}";
-        }
+        if (CurrentEditor == null) return;
+
+        var line = CurrentEditor.LineFromPosition(CurrentEditor.CurrentPosition) + 1;
+        var col = CurrentEditor.GetColumn(CurrentEditor.CurrentPosition) + 1;
+        
+        _positionLabel.Text = $"Ln {line}, Col {col}";
     }
 
     private void Editor_TextChanged(object? sender, EventArgs e)
     {
-        if (_isLoading) return;
+        if (_isLoading || _tabs.SelectedTab == null) return;
 
-        if (_tabs.SelectedTab != null)
+        var data = (TabData)_tabs.SelectedTab.Tag!;
+        if (!data.IsModified)
         {
-            var data = (TabData)_tabs.SelectedTab.Tag!;
-            if (!data.IsModified)
-            {
-                data.IsModified = true;
-                UpdateTabTitle();
-            }
-        }
-    }
-
-    #endregion
-
-    #region Session Management
-
-    private void SaveSession()
-    {
-        var tabs = new System.Collections.Generic.List<(string?, int, string)>();
-        
-        foreach (TabPage tab in _tabs.TabPages)
-        {
-            var data = (TabData)tab.Tag!;
-            var editor = GetEditor(tab);
-            tabs.Add((data.FilePath, data.UntitledNumber, editor?.Text ?? ""));
-        }
-        
-        _sessionManager.Save(tabs);
-    }
-
-    private void LoadSession()
-    {
-        foreach (var entry in _sessionManager.Load())
-        {
-            if (entry.FilePath != null)
-            {
-                OpenFileInTab(entry.FilePath);
-            }
-            else if (entry.BackupPath != null)
-            {
-                RestoreUntitledTab(entry);
-            }
-        }
-
-        if (_tabs.TabCount == 0)
-            NewTab();
-    }
-
-    private void RestoreUntitledTab(SessionManager.TabEntry entry)
-    {
-        var tab = CreateTab($"Untitled {entry.UntitledNumber}");
-        var data = (TabData)tab.Tag!;
-        data.UntitledNumber = entry.UntitledNumber;
-        _tabs.TabPages.Add(tab);
-        _tabs.SelectedTab = tab;
-
-        if (entry.UntitledNumber >= _untitledCount)
-            _untitledCount = entry.UntitledNumber;
-
-        var editor = CurrentEditor;
-        if (editor != null && entry.BackupPath != null)
-        {
-            _isLoading = true;
-            editor.Text = File.ReadAllText(entry.BackupPath);
-            _isLoading = false;
-
-            if (editor.TextLength > 0)
-            {
-                data.IsModified = true;
-                UpdateTabTitle();
-            }
+            data.IsModified = true;
+            UpdateTabTitle();
         }
     }
 
@@ -578,89 +523,110 @@ public sealed class MainForm : Form, IMessageFilter
 
     #region Form Overrides
 
-    protected override CreateParams CreateParams
-    {
-        get
-        {
-            var cp = base.CreateParams;
-            cp.Style |= 0x02000000; // WS_CLIPCHILDREN
-            return cp;
-        }
-    }
-
     protected override void OnLoad(EventArgs e)
     {
-        AllowDrop = true;
-        // Session loading moved to OnShown for faster startup perception
         base.OnLoad(e);
-    }
-
-    protected override void OnShown(EventArgs e)
-    {
-        base.OnShown(e);
-        Application.DoEvents(); // Ensure window is fully painted before loading
-        LoadSession();
-    }
-
-    protected override void OnFormClosing(FormClosingEventArgs e)
-    {
-        SaveSession();
-        base.OnFormClosing(e);
-    }
-
-    protected override void OnDragEnter(DragEventArgs e)
-    {
-        if (e.Data?.GetDataPresent(DataFormats.FileDrop) == true)
-            e.Effect = DragDropEffects.Copy;
-        base.OnDragEnter(e);
-    }
-
-    protected override void OnDragDrop(DragEventArgs e)
-    {
-        if (e.Data?.GetData(DataFormats.FileDrop) is string[] files)
+        
+        // Simple session restore
+        try 
         {
-            foreach (var file in files)
+            var tabs = _sessionManager.Load();
+            if (tabs != null)
             {
-                if (File.Exists(file)) 
-                    OpenFileInTab(file);
+                foreach (var tab in tabs)
+                {
+                    if (tab.FilePath != null && File.Exists(tab.FilePath))
+                        OpenFileInTab(tab.FilePath);
+                }
             }
         }
-        base.OnDragDrop(e);
+        catch { /* Ignore session errors */ }
+
+        if (_tabs.TabCount == 0)
+            NewTab();
     }
-
-    #endregion
-
-    #region IMessageFilter
 
     public bool PreFilterMessage(ref Message m)
     {
         // WM_LBUTTONDBLCLK = 0x0203
         if (m.Msg == 0x0203)
         {
-            var screenPt = Cursor.Position;
-            var tabPt = _tabs.PointToClient(screenPt);
-
-            // Check if click is within the tab header area
-            if (tabPt.X >= 0 && tabPt.X < _tabs.Width && tabPt.Y >= 0 && tabPt.Y < 30)
+            var tabPt = _tabs.PointToClient(Cursor.Position);
+            // Check if in tab header area but not on any tab
+            if (tabPt.Y >= 0 && tabPt.Y < 30)
             {
                 bool onTab = false;
                 for (int i = 0; i < _tabs.TabCount; i++)
-                {
-                    if (_tabs.GetTabRect(i).Contains(tabPt))
-                    {
-                        onTab = true;
-                        break;
-                    }
-                }
-
-                if (!onTab)
-                {
-                    NewTab();
-                    return true;
-                }
+                    if (_tabs.GetTabRect(i).Contains(tabPt)) { onTab = true; break; }
+                
+                if (!onTab) { NewTab(); return true; }
             }
         }
         return false;
+    }
+
+    #endregion
+
+    #region Compare
+
+    private void SelectFirstToCompare()
+    {
+        if (CurrentEditor == null) return;
+        _compareFirstFileContent = CurrentEditor.Text;
+        _compareFirstFileName = GetCurrentTabTitle();
+        
+        // Update menu item
+        _compareWithMenuItem.Text = $"Compare with '{_compareFirstFileName}'";
+        _compareWithMenuItem.Enabled = true;
+        
+        _statusLabel.Text = $"Selected '{_compareFirstFileName}' for comparison";
+    }
+
+    private void CompareWithFirst()
+    {
+        if (CurrentEditor == null) return;
+        
+        if (_compareFirstFileContent == null || _compareFirstFileName == null)
+        {
+            MessageBox.Show("Please select the first file to compare first.\n\nUse Compare → Select First to Compare (Ctrl+1)", 
+                "Compare", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var secondFileContent = CurrentEditor.Text;
+        var secondFileName = GetCurrentTabTitle();
+        
+        // Don't compare with itself
+        if (secondFileName == _compareFirstFileName && secondFileContent == _compareFirstFileContent)
+        {
+            MessageBox.Show("Cannot compare a file with itself.", "Compare", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        // Show diff view
+        using var diffForm = new DiffViewForm(
+            _compareFirstFileContent, 
+            _compareFirstFileName, 
+            secondFileContent, 
+            secondFileName,
+            _editorFont);
+        diffForm.ShowDialog(this);
+    }
+    
+    private void ClearCompareSelection()
+    {
+        _compareFirstFileContent = null;
+        _compareFirstFileName = null;
+        _compareWithMenuItem.Text = "Compare with First";
+        _compareWithMenuItem.Enabled = false;
+        _statusLabel.Text = "Compare selection cleared";
+    }
+
+    private string GetCurrentTabTitle()
+    {
+        if (_tabs.SelectedTab == null) return "Untitled";
+        var data = (TabData)_tabs.SelectedTab.Tag!;
+        return data.DisplayName;
     }
 
     #endregion

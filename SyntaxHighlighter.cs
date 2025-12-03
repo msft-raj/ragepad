@@ -61,6 +61,10 @@ internal static class SyntaxHighlighter
             case ".psm1":
                 ApplyPowerShell(editor);
                 break;
+            case ".diff":
+            case ".patch":
+                ApplyDiff(editor);
+                break;
             default:
                 ApplyPlainText(editor);
                 break;
@@ -266,5 +270,27 @@ internal static class SyntaxHighlighter
         editor.Styles[Style.PowerShell.Alias].ForeColor = Color.FromArgb(43, 145, 175);
 
         editor.SetKeywords(0, "begin break catch class continue data define do dynamicparam else elseif end exit filter finally for foreach from function if in param process return switch throw trap try until using var while workflow");
+    }
+
+    private static void ApplyDiff(Scintilla editor)
+    {
+        editor.LexerName = "diff";
+
+        // 0: Default
+        editor.Styles[0].ForeColor = Color.Black;
+        // 1: Comment
+        editor.Styles[1].ForeColor = Color.Gray;
+        // 2: Command (+++, ---)
+        editor.Styles[2].ForeColor = Color.Blue;
+        // 3: Header
+        editor.Styles[3].ForeColor = Color.Gray;
+        // 4: Position (@@)
+        editor.Styles[4].ForeColor = Color.Purple;
+        // 5: Deleted (-)
+        editor.Styles[5].ForeColor = Color.Red;
+        // 6: Added (+)
+        editor.Styles[6].ForeColor = Color.Green;
+        // 7: Changed
+        editor.Styles[7].ForeColor = Color.Orange;
     }
 }

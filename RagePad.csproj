@@ -16,6 +16,7 @@
     <PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="DiffPlex" Version="1.9.0" />
     <PackageReference Include="Scintilla5.NET" Version="6.1.0" />
   </ItemGroup>
   <ItemGroup>
