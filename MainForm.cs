@@ -1,7 +1,9 @@
 using ScintillaNET;
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.Linq;
 using System.Windows.Forms;
 using RagePad.Models;
 using RagePad.Services;
@@ -31,6 +33,10 @@ public sealed class MainForm : Form, IMessageFilter
     // Compare fields
     private string? _compareFirstFileContent;
     private string? _compareFirstFileName;
+
+    // Recent files
+    private ToolStripMenuItem _recentFilesMenu = null!;
+    private const int MaxRecentFiles = 10;
 
     #endregion
 
@@ -167,6 +173,11 @@ public sealed class MainForm : Form, IMessageFilter
         file.DropDownItems.Add(new ToolStripMenuItem("&Save", null, (s, e) => SaveFile(), Keys.Control | Keys.S));
         file.DropDownItems.Add(new ToolStripMenuItem("Save &As...", null, (s, e) => SaveFileAs(), Keys.Control | Keys.Shift | Keys.S));
         file.DropDownItems.Add(new ToolStripSeparator());
+        
+        _recentFilesMenu = new ToolStripMenuItem("Recent Files");
+        file.DropDownItems.Add(_recentFilesMenu);
+        file.DropDownItems.Add(new ToolStripSeparator());
+        
         file.DropDownItems.Add(new ToolStripMenuItem("Close Tab", null, (s, e) => CloseTab(), Keys.Control | Keys.W));
         file.DropDownItems.Add(new ToolStripSeparator());
         file.DropDownItems.Add(new ToolStripMenuItem("E&xit", null, (s, e) => Close(), Keys.Alt | Keys.F4));
@@ -390,6 +401,7 @@ public sealed class MainForm : Form, IMessageFilter
         ((TabData)newTab.Tag!).IsModified = false;
         UpdateTitle();
         _statusLabel.Text = $"Opened: {filePath}";
+        AddToRecentFiles(filePath);
     }
 
     private void SaveFile()
@@ -415,12 +427,15 @@ public sealed class MainForm : Form, IMessageFilter
 
         using var dlg = new SaveFileDialog
         {
-            Filter = "All Files (*.*)|*.*|Text Files (*.txt)|*.txt"
+            Filter = "Text Files (*.txt)|*.txt|All Files (*.*)|*.*",
+            DefaultExt = "txt"
         };
 
         var data = (TabData)_tabs.SelectedTab.Tag!;
         if (data.FilePath != null)
             dlg.FileName = Path.GetFileName(data.FilePath);
+        else
+            dlg.FileName = data.DisplayName + ".txt";
 
         if (dlg.ShowDialog() == DialogResult.OK)
         {
@@ -431,7 +446,85 @@ public sealed class MainForm : Form, IMessageFilter
             UpdateTabTitle();
             UpdateTitle();
             _statusLabel.Text = $"Saved: {dlg.FileName}";
+            AddToRecentFiles(dlg.FileName);
         }
+    }
+
+    #endregion
+
+    #region Recent Files
+
+    private void LoadRecentFiles()
+    {
+        _recentFilesMenu.DropDownItems.Clear();
+        
+        try
+        {
+            if (!File.Exists(AppInfo.RecentFilesFile))
+            {
+                _recentFilesMenu.Enabled = false;
+                return;
+            }
+
+            var files = File.ReadAllLines(AppInfo.RecentFilesFile)
+                .Where(f => !string.IsNullOrWhiteSpace(f) && File.Exists(f))
+                .Take(MaxRecentFiles)
+                .ToList();
+
+            if (files.Count == 0)
+            {
+                _recentFilesMenu.Enabled = false;
+                return;
+            }
+
+            foreach (var file in files)
+            {
+                var item = new ToolStripMenuItem(file);
+                item.Click += (s, e) => OpenFileInTab(file);
+                _recentFilesMenu.DropDownItems.Add(item);
+            }
+
+            _recentFilesMenu.DropDownItems.Add(new ToolStripSeparator());
+            _recentFilesMenu.DropDownItems.Add(new ToolStripMenuItem("Clear Recent Files", null, (s, e) => ClearRecentFiles()));
+            _recentFilesMenu.Enabled = true;
+        }
+        catch
+        {
+            _recentFilesMenu.Enabled = false;
+        }
+    }
+
+    private void AddToRecentFiles(string filePath)
+    {
+        try
+        {
+            var files = new List<string> { filePath };
+            
+            if (File.Exists(AppInfo.RecentFilesFile))
+            {
+                files.AddRange(File.ReadAllLines(AppInfo.RecentFilesFile)
+                    .Where(f => !string.IsNullOrWhiteSpace(f) && 
+                                !string.Equals(f, filePath, StringComparison.OrdinalIgnoreCase)));
+            }
+
+            if (!Directory.Exists(AppInfo.SessionDir))
+                Directory.CreateDirectory(AppInfo.SessionDir);
+
+            File.WriteAllLines(AppInfo.RecentFilesFile, files.Take(MaxRecentFiles));
+            LoadRecentFiles();
+        }
+        catch { /* Ignore errors */ }
+    }
+
+    private void ClearRecentFiles()
+    {
+        try
+        {
+            if (File.Exists(AppInfo.RecentFilesFile))
+                File.Delete(AppInfo.RecentFilesFile);
+            LoadRecentFiles();
+        }
+        catch { /* Ignore errors */ }
     }
 
     #endregion
@@ -527,16 +620,40 @@ public sealed class MainForm : Form, IMessageFilter
     {
         base.OnLoad(e);
         
-        // Simple session restore
+        // Load recent files menu
+        LoadRecentFiles();
+        
+        // Session restore
         try 
         {
             var tabs = _sessionManager.Load();
             if (tabs != null)
             {
-                foreach (var tab in tabs)
+                foreach (var entry in tabs)
                 {
-                    if (tab.FilePath != null && File.Exists(tab.FilePath))
-                        OpenFileInTab(tab.FilePath);
+                    if (entry.FilePath != null && File.Exists(entry.FilePath))
+                    {
+                        OpenFileInTab(entry.FilePath);
+                    }
+                    else if (entry.BackupPath != null && File.Exists(entry.BackupPath))
+                    {
+                        // Restore untitled file from backup
+                        _untitledCount = Math.Max(_untitledCount, entry.UntitledNumber);
+                        var tab = CreateTab($"Untitled {entry.UntitledNumber}");
+                        var tabData = (TabData)tab.Tag!;
+                        tabData.UntitledNumber = entry.UntitledNumber;
+                        
+                        _tabs.TabPages.Add(tab);
+                        _tabs.SelectedTab = tab;
+                        
+                        _isLoading = true;
+                        var editor = (ScintillaNET.Scintilla)tab.Controls[0];
+                        editor.Text = File.ReadAllText(entry.BackupPath);
+                        _isLoading = false;
+                        
+                        tabData.IsModified = true;
+                        UpdateTabTitle();
+                    }
                 }
             }
         }
@@ -544,6 +661,25 @@ public sealed class MainForm : Form, IMessageFilter
 
         if (_tabs.TabCount == 0)
             NewTab();
+    }
+
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        base.OnFormClosing(e);
+        
+        // Save session
+        try
+        {
+            var tabsData = new List<(string? filePath, int untitledNumber, string content)>();
+            foreach (TabPage tabPage in _tabs.TabPages)
+            {
+                var data = (TabData)tabPage.Tag!;
+                var editor = (ScintillaNET.Scintilla)tabPage.Controls[0];
+                tabsData.Add((data.FilePath, data.UntitledNumber, editor.Text));
+            }
+            _sessionManager.Save(tabsData);
+        }
+        catch { /* Ignore session save errors */ }
     }
 
     public bool PreFilterMessage(ref Message m)

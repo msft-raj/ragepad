@@ -96,17 +96,5 @@ internal sealed class AboutDialog : Form
             catch { }
         };
         Controls.Add(emailLink);
-
-        // OK button
-        var btnOk = new Button
-        {
-            Text = "OK",
-            Left = (ClientSize.Width - 80) / 2,
-            Top = emailLink.Bottom + 15,
-            Width = 80,
-            DialogResult = DialogResult.OK
-        };
-        Controls.Add(btnOk);
-        AcceptButton = btnOk;
     }
 }

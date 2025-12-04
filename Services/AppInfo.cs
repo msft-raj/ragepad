@@ -16,6 +16,7 @@ internal static class AppInfo
     
     public static string SessionFile => Path.Combine(SessionDir, "session.txt");
     public static string BackupDir => Path.Combine(SessionDir, "backup");
+    public static string RecentFilesFile => Path.Combine(SessionDir, "recent.txt");
     
     public static string GetVersion()
     {
